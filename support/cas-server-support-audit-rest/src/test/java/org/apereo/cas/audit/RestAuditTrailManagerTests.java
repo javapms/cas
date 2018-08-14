@@ -1,25 +1,28 @@
 package org.apereo.cas.audit;
 
+import org.apereo.cas.audit.spi.BaseAuditConfigurationTests;
 import org.apereo.cas.config.CasCoreUtilSerializationConfiguration;
-import org.apereo.cas.configuration.model.core.audit.AuditRestProperties;
+import org.apereo.cas.config.CasSupportRestAuditConfiguration;
 import org.apereo.cas.util.CollectionUtils;
 import org.apereo.cas.util.MockWebServer;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import lombok.Getter;
 import lombok.val;
 import org.apereo.inspektr.audit.AuditActionContext;
-import org.junit.ClassRule;
-import org.junit.Rule;
+import org.apereo.inspektr.audit.AuditTrailManager;
+import org.junit.BeforeClass;
 import org.junit.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.cloud.autoconfigure.RefreshAutoConfiguration;
 import org.springframework.core.io.ByteArrayResource;
 import org.springframework.http.MediaType;
-import org.springframework.test.context.junit4.rules.SpringClassRule;
-import org.springframework.test.context.junit4.rules.SpringMethodRule;
+import org.springframework.test.context.TestPropertySource;
 
 import java.nio.charset.StandardCharsets;
-import java.time.LocalDate;
 import java.util.Date;
 
 import static org.junit.Assert.*;
@@ -32,34 +35,45 @@ import static org.junit.Assert.*;
  */
 @SpringBootTest(classes = {
     RefreshAutoConfiguration.class,
+    CasSupportRestAuditConfiguration.class,
     CasCoreUtilSerializationConfiguration.class
 })
-public class RestAuditTrailManagerTests {
-    @ClassRule
-    public static final SpringClassRule SPRING_CLASS_RULE = new SpringClassRule();
-
+@TestPropertySource(properties = {
+    "cas.audit.rest.url=http://localhost:9296",
+    "cas.audit.rest.asynchronous=false"
+})
+@Getter
+public class RestAuditTrailManagerTests extends BaseAuditConfigurationTests {
     private static final ObjectMapper MAPPER = new ObjectMapper().findAndRegisterModules();
 
-    @Rule
-    public final SpringMethodRule springMethodRule = new SpringMethodRule();
+    private static final String DATA;
 
-    @Test
-    public void verifyAction() throws Exception {
-        val props = new AuditRestProperties();
-        props.setUrl("http://localhost:9296");
-        val r = new RestAuditTrailManager(props);
-        r.setAsynchronous(false);
-
+    static {
         val audit = new AuditActionContext("casuser", "resource", "action",
             "CAS", new Date(), "123.456.789.000", "123.456.789.000");
-        val data = MAPPER.writeValueAsString(CollectionUtils.wrapSet(audit));
-        try (val webServer = new MockWebServer(9296,
-            new ByteArrayResource(data.getBytes(StandardCharsets.UTF_8), "REST Output"), MediaType.APPLICATION_JSON_VALUE)) {
-            webServer.start();
-            r.record(audit);
-            assertFalse(r.getAuditRecordsSince(LocalDate.now().minusDays(2)).isEmpty());
-        } catch (final Exception e) {
-            throw new AssertionError(e.getMessage(), e);
+        try {
+            DATA = MAPPER.writeValueAsString(CollectionUtils.wrapSet(audit));
+        } catch (final JsonProcessingException e) {
+            throw new RuntimeException(e);
         }
+    }
+
+    @Autowired
+    @Qualifier("restAuditTrailManager")
+    private AuditTrailManager auditTrailManager;
+
+    @BeforeClass
+    public static void initialize() throws JsonProcessingException {
+    }
+
+    @Test
+    @Override
+    public void verifyAuditManager() {
+        try (val webServer = new MockWebServer(9296,
+            new ByteArrayResource(DATA.getBytes(StandardCharsets.UTF_8), "REST Output"), MediaType.APPLICATION_JSON_VALUE)) {
+            webServer.start();
+            assertTrue(webServer.isRunning());
+        }
+        super.verifyAuditManager();
     }
 }
